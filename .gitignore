@@ -1,0 +1,29 @@
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Session / login state
+data/session.json
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Debug output
+debug/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code
+.claude/
+
+# OS
+Thumbs.db
+desktop.ini
