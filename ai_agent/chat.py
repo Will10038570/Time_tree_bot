@@ -11,7 +11,7 @@ DEFAULT_MODEL = "gemini-2.5-flash"
 _AGENT_MD = Path(__file__).parent / "AI_AGENT.md"
 DEFAULT_SYSTEM = _AGENT_MD.read_text(encoding="utf-8") if _AGENT_MD.exists() else "You are a helpful assistant."
 
-_SCHEMA_YML = Path(__file__).parent.parent / "json_example.yml"
+_SCHEMA_YML = Path(__file__).parent.parent / "configs" / "json_example.yml"
 
 
 def _build_schema(d: dict) -> types.Schema:

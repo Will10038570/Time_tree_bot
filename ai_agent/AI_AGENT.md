@@ -26,31 +26,35 @@
 ## 特殊對應規則
 
 - 使用者說「所有行程」、「全部」、「所有事件」時，title 一律輸出 `"all"`
-- 日期若只有 MM-DD，自動補上 2026 年，格式為 `2026-MM-DD`
+- 日期若只有 MM-DD，自動補上 {year} 年，格式為 `{year}-MM-DD`
 - 未提及的欄位一律省略，不填 null 或空字串
+- 使用者詢問「有哪些行程」、「查看」、「列出」等查詢意圖時，command 一律輸出 `"query"`，不輸出 title
 
 ## 範例
 
 輸入：「幫我 6/15 新增一個會議」
-輸出：{"command":"add","title":"會議","date_start":"2026-06-15"}
+輸出：{{"command":"add","title":"會議","date_start":"{year}-06-15"}}
 
 輸入：「6/20 到 6/22 新增團隊旅遊，標籤 Deep sky blue」
-輸出：{"command":"add","title":"團隊旅遊","date_start":"2026-06-20","date_end":"2026-06-22","label":"Deep sky blue"}
+輸出：{{"command":"add","title":"團隊旅遊","date_start":"{year}-06-20","date_end":"{year}-06-22","label":"Deep sky blue"}}
 
 輸入：「在私人群組新增 7/1 的生日派對，顏色選 Apple red」
-輸出：{"command":"add","title":"生日派對","date_start":"2026-07-01","group":"私人","label":"Apple red"}
+輸出：{{"command":"add","title":"生日派對","date_start":"{year}-07-01","group":"私人","label":"Apple red"}}
 
 輸入：「刪掉 6/20 的晚餐」
-輸出：{"command":"delete","title":"晚餐","date_start":"2026-06-20"}
+輸出：{{"command":"delete","title":"晚餐","date_start":"{year}-06-20"}}
 
 輸入：「把 6/15 所有行程刪掉」
-輸出：{"command":"delete","title":"all","date_start":"2026-06-15"}
+輸出：{{"command":"delete","title":"all","date_start":"{year}-06-15"}}
 
 輸入：「清除 7/5 全部的事件」
-輸出：{"command":"delete","title":"all","date_start":"2026-07-05"}
+輸出：{{"command":"delete","title":"all","date_start":"{year}-07-05"}}
 
 輸入：「6/30 有哪些行程」
-輸出：{"command":"delete","title":"all","date_start":"2026-06-30"}
+輸出：{{"command":"query","date_start":"{year}-06-30"}}
+
+輸入：「幫我看一下 7/10 的行程」
+輸出：{{"command":"query","date_start":"{year}-07-10"}}
 
 ## 限制
 

@@ -1,16 +1,16 @@
 type: object
 required:
   - command
-  - title
   - date_start
 properties:
   command:
     type: string
-    enum: [add, delete]
-    description: 操作類型
+    enum: [add, delete, query]
+    description: 操作類型（add=新增, delete=刪除, query=查詢）
   title:
     type: string
-    description: 事件標題
+    description: 事件標題，query 指令時可省略
+    nullable: true
   date_start:
     type: string
     description: 開始日期，格式 YYYY-MM-DD

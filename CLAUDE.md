@@ -17,40 +17,35 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-A LINE chatbot that automates TimeTree calendar operations via Playwright browser automation. Users send text commands to a LINE chat, which triggers browser-based interactions with timetreeapp.com.
+A LINE chatbot that automates TimeTree calendar operations via Playwright browser automation. Users send text commands to LINE, which are interpreted by Gemini AI and converted into structured JSON commands, then executed against timetreeapp.com.
 
 ## 實作狀態
 
 | 檔案 | 狀態 |
 |------|------|
-| `src/bot.py` | ✅ 完成 |
-| `src/command_handler.py` | ✅ 完成（仍依賴尚未實作的 `TimeTreeAutomation`） |
+| `src/main.py` | ✅ 完成（中控 entry point，管理所有 Manager 生命週期） |
+| `src/WebhookManager.py` | ✅ 完成（pyngrok tunnel 管理） |
+| `src/GeminiManager.py` | ✅ 完成（Gemini 意圖解析，per-user session 隔離） |
+| `src/TimeTreeOperator.py` | ✅ 完成（橋接 `function/` 執行 add / delete / query） |
+| `src/QueueWorker.py` | ✅ 完成（背景 thread，解決 Webhook 30 秒超時，用 push message 回覆） |
+| `src/LineBotManager.py` | ✅ 完成（Flask webhook，立即回覆「處理中」+ 入列） |
+| `function/command.py` | ✅ 完成（add / delete / query 三種指令執行） |
 | `function/operation_functions.py` | ✅ 完成（底層 Playwright helpers） |
 | `function/event_functions.py` | ✅ 完成（`add_event` / `delete_event` / `get_events_on_date`） |
-| `locators.py` | ❌ **尚未建立**（`testing.py` 的 import 目標，應公開 `function/` 的 API） |
-| `src/automation.py` | ❌ **尚未建立**（`command_handler.py` 依賴的 `TimeTreeAutomation` class） |
+| `ai_agent/AI_AGENT.md` | ✅ 完成（Gemini system prompt，含 query 指令規則） |
+| `configs/json_example.yml` | ✅ 完成（JSON schema，command 支援 add / delete / query） |
 | `tools/inspector.py` | ❌ **尚未建立**（UI 偵錯工具） |
-
-架構目前有兩條線並行：
-- `src/` 路線：`bot.py` → `command_handler.py` → `automation.py`（`TimeTreeAutomation` class，**尚未實作**）
-- `function/` 路線：以 Page 為參數的函式集，由 `testing.py` 透過 `locators` 模組驅動
 
 ## Running the Project
 
-**Start the LINE bot (main entry point):**
+**啟動 LINE Bot（主要 entry point）：**
 ```bash
 .venv\Scripts\activate   # Windows
-python src/bot.py
+python src/main.py
 ```
-Starts a Flask server on port 5000. Requires `.env` with `LINE_CHANNEL_ACCESS_TOKEN` and `LINE_CHANNEL_SECRET`.
+需要 `.env` 設定 `LINE_CHANNEL_ACCESS_TOKEN`、`LINE_CHANNEL_SECRET`、`GEMINI_API_KEY`、`NGROK_AUTHTOKEN`（可選）。
 
-**Run automation directly (for testing, once implemented):**
-```bash
-python src/automation.py
-```
-Edit the `__main__` block to test specific operations. Runs in headed (visible) browser mode with `page.pause()` at the end.
-
-**Debug/inspect the TimeTree UI (once implemented):**
+**Debug/inspect the TimeTree UI（一旦實作）：**
 ```bash
 python tools/inspector.py --action <action> [--date MM-DD] [--title 標題]
 ```
@@ -63,91 +58,99 @@ Actions:
 - `delete-menu` — open event delete menu (requires `--date --title`)
 - `full` — dump entire page + screenshot
 
-Each action dumps a JSON snapshot to `debug/` and calls `page.pause()` for interactive inspection. If `data/session.json` is missing, prompts for manual login before saving the session.
-
 ## Architecture
 
-### LINE Bot 路線（src/）
+### 系統流程
 
 ```
-src/bot.py (Flask webhook /callback)
-  → src/command_handler.py (parses text → structured command)
-    → src/automation.py (TimeTreeAutomation class)  ← 尚未實作
-      → timetreeapp.com
+LINE User
+  → LineBotManager (Flask /callback)   ← 立即回覆「處理中」
+      → QueueWorker.enqueue()           ← 入列，避免 30 秒 Webhook 超時
+          → GeminiManager.parse()       ← Gemini AI 解析自然語言 → JSON
+          → TimeTreeOperator.run()      ← redirect_stdout 捕捉 print 輸出
+              → function/command.py     ← Playwright 操作 timetreeapp.com
+          → QueueWorker._push()         ← LINE push message 回傳結果
 ```
 
-**`src/bot.py`** — LINE Messaging API v3 webhook. Calls `free_port()` on startup to kill any process using port 5000 (`netstat`/`taskkill`, Windows-only). Passes each incoming message to `command_handler.py` and replies with the result.
+### Manager 生命週期（src/main.py）
 
-**`src/command_handler.py`** — Parses raw text into `add`/`delete` commands and invokes the automator with `headless=True`. Uses `redirect_stdout` to capture all `print()` output from `automation.py` and return it as the LINE reply. This means anything printed inside `add_event()`/`delete_event()` — including debug lines — becomes visible to the LINE user.
+`main.py` 依序初始化並啟動所有元件，並於 SIGINT/SIGTERM 時依序停止：
 
-**`src/automation.py`** _(待實作)_ — Context manager class `TimeTreeAutomation`. Public methods: `add_event(date_start, title, group_name, color_name, date_end)` and `delete_event(date_start, title)`. Loads browser state from `data/session.json`.
+1. **WebhookManager** — 用 pyngrok 建立 HTTPS tunnel，印出 `/callback` URL
+2. **GeminiManager** — 載入 `GEMINI_API_KEY`、讀取 system prompt（`ai_agent/AI_AGENT.md`）、載入 JSON schema（`configs/json_example.yml`），每個 user_id 維護獨立的對話 history
+3. **TimeTreeOperator** — 無狀態橋接層，`run(cmd)` 呼叫 `function/command.run_command()`，用 `redirect_stdout` 捕捉輸出為字串回傳
+4. **QueueWorker** — daemon thread 消費佇列，依序呼叫 Gemini 解析 → Operator 執行 → LINE push message
+5. **LineBotManager** — Flask app，webhook 驗簽後立即以 reply token 回覆「⏳ 處理中...」，再 `enqueue()` 給 QueueWorker
 
 ### 函式庫路線（function/）
 
 ```
-testing.py
-  → locators (尚未建立的橋接模組)
-    → function/event_functions.py   (add_event, delete_event, get_events_on_date)
-      → function/operation_functions.py  (goto_calendar, _goto_target_month, _find_month_cell, ...)
-        → timetreeapp.com
+function/command.py (run_command, command_add, command_delete, command_query)
+  → function/event_functions.py  (add_event, delete_event, get_events_on_date)
+    → function/operation_functions.py  (log_in, goto_calendar, select_group, ...)
+      → timetreeapp.com
 ```
 
-**`function/operation_functions.py`** — Page-level Playwright helpers. Key functions:
+**`function/command.py`** — 每次指令都用 `sync_playwright()` 開新 browser，執行完後 `context.storage_state()` 更新 session。`initial_page()` 負責登入或載入 session、選擇群組。
+
+**`function/operation_functions.py`** — Page-level Playwright helpers:
 - `log_in(page)` — 填入 `TIMETREE_EMAIL`/`TIMETREE_PASSWORD` 並登入
 - `goto_calendar(page)` — 前往 `/calendars` 並等 networkidle
-- `_goto_target_month(page, date)` — 重置到今日再點 Next/Previous month 到目標月份
+- `select_group(page, group)` — 側欄點選指定行事曆群組
+- `_goto_target_month(page, date)` — 重置到今日再點 Next/Previous month
 - `_find_month_cell(page, day)` — 以兩個 "1" 之間的範圍定位當月 gridcell
-- `_events_in_cell(page, cell)` — 用 bounding box 找出視覺上在格子內的事件按鈕
+- `_events_in_cell(page, cell)` — 用 bounding box 找出格子內的事件按鈕
 
-**`function/event_functions.py`** — 高階操作（使用相對 import 引入 operation_functions）:
-- `add_event(page, title, start, end=None)` — 點 `calendar-bar-event-add-button` 開啟表單，固定選色 `Deep sky blue`
-- `delete_event(page, title, date)` — `title="all"` 時刪除當天所有事件（while 迴圈）
-- `get_events_on_date(page, date)` — 回傳指定日期的事件名稱清單
-
-**`testing.py`** — 批次測試工具。產生 20 筆隨機分布在 2026-06 ~ 2026-07 的 test 事件，透過 `locators` 模組（尚未建立）驅動 add/delete 流程。`_fmt_date()` 中使用 `%#d`（Windows 專用，去除日期零填充）。
+**`function/event_functions.py`** — 高階操作：
+- `add_event(page, title, start, end=None, label=None)`
+- `delete_event(page, title, date_start)` — `title="all"` 時 while 迴圈刪除當天全部
+- `get_events_on_date(page, date)` — 回傳事件名稱清單
 
 ## Import Path Convention
 
-**`src/` 路線**：`bot.py` 和 `command_handler.py` 使用裸模組名稱 import（`from automation import ...`），`src/` 必須在 `sys.path` 中。`python src/bot.py` 啟動時 Python 自動添加。**不要**改成 `from src.automation import ...`。
+**`src/` 路線**：所有 Manager 使用裸模組名稱 import（`from GeminiManager import ...`），`src/` 必須在 `sys.path` 中。`python src/main.py` 啟動時 Python 自動添加。**不要**改成 `from src.GeminiManager import ...`。
 
-**`function/` 套件**：`event_functions.py` 使用相對 import（`from .operation_functions import ...`），必須作為套件使用（如 `from function.event_functions import add_event`），不能直接執行單一檔案。
+**`function/` 套件**：`event_functions.py` 使用相對 import（`from .operation_functions import ...`），必須作為套件使用（如 `from function.event_functions import add_event`），不能直接執行單一檔案。`TimeTreeOperator` 用 `sys.path.insert(0, project_root)` 確保可從 `src/` 引入 `function/`。
+
+## Gemini JSON Schema
+
+Gemini 輸出固定符合 `configs/json_example.yml` 定義的 schema：
+
+| 欄位 | 必填 | 說明 |
+|------|------|------|
+| `command` | ✅ | `add` / `delete` / `query` |
+| `date_start` | ✅ | `YYYY-MM-DD` |
+| `title` | query 時可省略 | 刪除全部時固定為 `"all"` |
+| `date_end` | ❌ | 多日活動結束日期 |
+| `group` | ❌ | 行事曆群組名稱 |
+| `label` | ❌ | `Apple red` / `Deep sky blue` / `Emerald green` |
 
 ## Selector Strategy
 
-TimeTree uses CSS Modules with dynamic class names that change on UI updates. All interactive operations use a fallback chain:
+TimeTree 使用 CSS Modules，class name 會隨 UI 更新變動。操作優先順序：
 
 ```
 data-test-id  →  aria-label  →  role  →  :has-text()  →  hardcoded className
-  (most stable)                                              (most fragile)
+  (最穩定)                                                   (最脆弱)
 ```
 
-Three hardcoded CSS classes that are likely to break first:
-- `button._1hsbcq11` — sidebar calendar group toggle buttons (`select_sidebar_calendar`)
-- `_72xel51` — indicates a calendar group is selected
-- `span.lndlxo6` — event title span inside draggable event buttons
+最容易失效的 hardcoded class：
+- `button._1hsbcq11` — sidebar calendar group toggle buttons
+- `_72xel51` — 表示 calendar group 已被選取
+- `span.lndlxo6` — draggable event button 內的事件標題 span
 
-When selectors break, run `tools/inspector.py` with the appropriate `--action` to capture the new DOM structure.
-
-## Command Syntax
-
-Commands parsed by `command_handler.py`:
-- `add <title> <date> [end_date] [group] [color]` — Create event
-- `delete <date>` — List events on that date
-- `delete <title> <date>` — Delete specific event
-
-Date formats: `YYYY-MM-DD` or `MM-DD` (auto-prefixes with `2026-`). The year prefix is hardcoded in `_normalize_date()` and `delete_event()` — update when the year changes. Default group: `私人`. Default color: `Emerald green`.
+Selector 失效時，用 `tools/inspector.py` 對應 `--action` 捕捉新 DOM 結構。
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `data/session.json` | Playwright browser storage state (login session). Delete to force re-login. |
-| `.env` | `LINE_CHANNEL_ACCESS_TOKEN` and `LINE_CHANNEL_SECRET` |
-| `codegen_row.py` | Playwright codegen 原型，展示 session-based 登入流程（根目錄，非正式模組） |
-| `tools/inspector.py` | UI inspection tool — run when selectors break after TimeTree UI updates（待實作） |
+| `data/session.json` | Playwright browser storage state（登入 session）。刪除可強制重新登入 |
+| `.env` | `LINE_CHANNEL_ACCESS_TOKEN`、`LINE_CHANNEL_SECRET`、`GEMINI_API_KEY`、`NGROK_AUTHTOKEN`、`TIMETREE_EMAIL`、`TIMETREE_PASSWORD` |
+| `ai_agent/AI_AGENT.md` | Gemini system prompt，包含輸出格式、範例、日期自動補年等規則 |
+| `configs/json_example.yml` | Gemini structured output 的 JSON schema 定義 |
 | `debug/` | JSON snapshots and screenshots produced during debugging |
-| `docs/PROJECT_REPORT.md` | Detailed architecture report with full method reference |
 
 ## Dependencies
 
-Managed in `.venv/` (Python 3.11.9). Key packages: `playwright`, `flask`, `line-bot-sdk`, `python-dotenv`. Install Playwright browsers with `playwright install chromium` if missing.
+Managed in `.venv/` (Python 3.11.9). Key packages: `playwright`, `flask`, `line-bot-sdk`, `google-genai`, `pyngrok`, `python-dotenv`, `pyyaml`. Install Playwright browsers with `playwright install chromium` if missing.
