@@ -1,0 +1,2 @@
+cd "C:\Users\swill\Desktop\Projects"; .\.venv\Scripts\playwright.exe codegen
+   --load-storage=data/session.json --output=codegen.py https://timetreeapp.com/calendarsss

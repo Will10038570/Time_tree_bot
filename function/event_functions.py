@@ -1,3 +1,4 @@
+import time
 from datetime import date as Date
 from playwright.sync_api import Page
 from .operation_functions import (
@@ -6,33 +7,34 @@ from .operation_functions import (
 )
 
 
-def _select_date(page: Page, start: str, end: str = None, timeout: int = 5000) -> None:
-    end = end or start
-
-    page.locator('[data-test-id="start-date-picker"]').click(timeout=timeout)
-    page.locator('[data-test-id="start-date-picker"]').press("Control+a")
+def _select_date(page: Page, start: str, end: str, timeout: int = 5000) -> None:
     page.locator('[data-test-id="start-date-picker"]').fill(_fmt_date(start), timeout=timeout)
-    page.locator('[data-test-id="start-date-picker"]').press("Tab")
+    page.locator('[data-test-id="start-date-picker"]').press("Enter")
+    time.sleep(0.5)
     if _is_picker_invalid(page, "start-date-picker"):
         raise ValueError(f"無效的開始日期：{start}")
 
-    page.locator('[data-test-id="end-date-picker"]').click(timeout=timeout)
-    page.locator('[data-test-id="end-date-picker"]').press("Control+a")
     page.locator('[data-test-id="end-date-picker"]').fill(_fmt_date(end), timeout=timeout)
     page.locator('[data-test-id="end-date-picker"]').press("Enter")
+    time.sleep(0.5)
     if _is_picker_invalid(page, "end-date-picker"):
         raise ValueError(f"無效的結束日期：{end}")
 
 
-def add_event(page: Page, title: str, start: str, end: str = None) -> None:
-    T = 300
+def add_event(page: Page, title: str, start: str, end: str, label: str) -> None:
+    if not title or not start or not end or not label:
+        print(f"[add_event] 缺少必要參數 title={title!r} start={start!r} end={end!r} label={label!r}")
+        return
+    T = 100
 
     def _step(name, fn):
+        print(f"[{name}] start")
         try:
             fn()
+            print(f"[{name}] ok")
             return True
         except Exception as e:
-            print(f"[{name}] timeout: {title} {start} — {type(e).__name__}")
+            print(f"[{name}] FAIL — {type(e).__name__}: {e}")
             return False
 
     def _cancel():
@@ -48,30 +50,39 @@ def add_event(page: Page, title: str, start: str, end: str = None) -> None:
         print(f"[invalid date] {e}")
         return
 
-    if not _step("open", lambda: page.locator('[data-test-id="calendar-bar-event-add-button"]').click(timeout=T)):
+    if not _step("open", lambda: page.locator('[data-test-id="calendar-bar-event-add-button"]').click(timeout=10000)):
         return
-    page.wait_for_timeout(500)
+    time.sleep(0.5)
 
+    print("[select_date] start")
     try:
         _select_date(page, start, end, timeout=1000)
+        print("[select_date] ok")
     except ValueError as e:
-        print(f"[invalid date] {e}")
+        print(f"[select_date] FAIL invalid date — {e}")
         _cancel()
         return
     except Exception as e:
-        print(f"[select_date] timeout: {title} {start} — {type(e).__name__}")
+        print(f"[select_date] FAIL — {type(e).__name__}: {e}")
         _cancel()
         return
+    time.sleep(0.5)
 
-    if not _step("title", lambda: page.get_by_role("textbox", name="Event title (required)").fill(title, timeout=T)):
+    if not _step("title", lambda: (page.get_by_placeholder("Title").click(timeout=T), page.get_by_placeholder("Title").press("Control+a"), page.get_by_placeholder("Title").press_sequentially(title), page.get_by_placeholder("Title").press("Tab"))):
         _cancel()
         return
+    time.sleep(0.5)
+
     if not _step("label", lambda: page.locator('[data-test-id="label-select"]').click(timeout=T)):
         _cancel()
         return
-    if not _step("color", lambda: page.locator('[data-test-id="Deep sky blue"]').click(timeout=T)):
+    time.sleep(0.5)
+
+    if not _step("color", lambda label=label: page.locator(f'[data-test-id="{label}"]').click(timeout=T)):
         _cancel()
         return
+    time.sleep(0.5)
+
     if not _step("save", lambda: page.locator('[data-test-id="event-form-submit-button"]').click(timeout=T)):
         _cancel()
         return
@@ -88,88 +99,59 @@ def get_events_on_date(page: Page, date: str) -> list[str]:
             for btn in _events_in_cell(page, cell)]
 
 
-def _delete_one_on_date(page: Page, date: str) -> bool:
-    """在目標日 cell 內找第一個可刪除的事件並刪除，成功回傳 True。"""
-    T = 1000
-    d = Date.fromisoformat(date)
-    _goto_target_month(page, date)
-    cell = _find_month_cell(page, d.day)
-    if cell is None:
-        print(f"[delete] cell not found: {date}")
-        return False
-    btns = _events_in_cell(page, cell)
-    if not btns:
-        print(f"[delete] no events: {date}")
-        return False
-    for btn in btns:
-        name = (btn.get_attribute("aria-label") or btn.inner_text()).strip()
-        try:
-            btn.click(timeout=T)
-            page.get_by_role("button", name="Menu").click(timeout=T)
-        except Exception as e:
-            print(f"[delete] '{name}' open/menu — {type(e).__name__}, skip")
-            try:
-                page.keyboard.press("Escape")
-            except Exception:
-                pass
-            continue
-        try:
-            page.get_by_role("button", name="Delete").click(timeout=T)
-            page.get_by_role("button", name="Delete").click(timeout=T)
-        except Exception as e:
-            print(f"[delete] confirm delete — {type(e).__name__}")
-            return False
-        print(f"[delete] '{name}' {date}")
-        return True
-    return False
-
-
-def delete_single_event(page: Page, title: str, date: str) -> bool:
-    """導到目標月，在目標日 cell 內找 title 並刪除，成功回傳 True。"""
+def delete_event(page: Page, title: str, date_start: str) -> bool:
     try:
-        d = Date.fromisoformat(date)
+        d = Date.fromisoformat(date_start)
     except ValueError:
-        print(f"[delete] invalid date: {date}")
+        print(f"[delete] invalid date: {date_start}")
         return False
+
     T = 1000
-    _goto_target_month(page, date)
-    cell = _find_month_cell(page, d.day)
-    if cell is None:
-        print(f"[delete] cell not found: {date}")
-        return False
-    btns = _events_in_cell(page, cell)
-    if not btns:
-        print(f"[delete] no events: {date}")
-        return False
-    for btn in btns:
-        name = (btn.get_attribute("aria-label") or btn.inner_text()).strip()
-        if name != title:
-            continue
-        try:
-            btn.click(timeout=T)
-            page.get_by_role("button", name="Menu").click(timeout=T)
-        except Exception as e:
-            print(f"[delete] '{name}' open/menu — {type(e).__name__}, skip")
-            try:
-                page.keyboard.press("Escape")
-            except Exception:
-                pass
-            continue
-        try:
-            page.get_by_role("button", name="Delete").click(timeout=T)
-            page.get_by_role("button", name="Delete").click(timeout=T)
-        except Exception as e:
-            print(f"[delete] confirm delete — {type(e).__name__}")
+    delete_all = (title == "all")
+
+    while True:
+        _goto_target_month(page, date_start)
+        cell = _find_month_cell(page, d.day)
+        if cell is None:
+            print(f"[delete] cell not found: {date_start}")
             return False
-        print(f"[delete] '{name}' {date}")
-        return True
-    return False
 
+        btns = _events_in_cell(page, cell)
+        if not btns:
+            if not delete_all:
+                print(f"[delete] no events: {date_start}")
+                return False
+            return True
 
-def delete_event(page: Page, title: str, date: str) -> None:
-    if title == "all":
-        while _delete_one_on_date(page, date):
-            pass
-    else:
-        if not delete_single_event(page, title, date):
-            print(f"找不到事件：{title} {date}")
+        deleted_one = False
+        for btn in btns:
+            name = (btn.get_attribute("aria-label") or btn.inner_text()).strip()
+            if not delete_all and name != title:
+                continue
+            try:
+                btn.click(timeout=T)
+                page.get_by_role("button", name="Menu").click(timeout=T)
+            except Exception as e:
+                print(f"[delete] '{name}' open/menu — {type(e).__name__}, skip")
+                try:
+                    page.keyboard.press("Escape")
+                except Exception:
+                    pass
+                continue
+            try:
+                page.get_by_role("button", name="Delete").click(timeout=T)
+                page.get_by_role("button", name="Delete").click(timeout=T)
+            except Exception as e:
+                print(f"[delete] confirm delete — {type(e).__name__}")
+                return False
+            print(f"[delete] '{name}' {date_start}")
+            deleted_one = True
+            break
+
+        if not deleted_one:
+            if not delete_all:
+                print(f"找不到事件：{title} {date_start}")
+            return False
+
+        if not delete_all:
+            return True

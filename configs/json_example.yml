@@ -1,0 +1,27 @@
+type: object
+required:
+  - command
+  - title
+  - date_start
+properties:
+  command:
+    type: string
+    enum: [add, delete]
+    description: 操作類型
+  title:
+    type: string
+    description: 事件標題
+  date_start:
+    type: string
+    description: 開始日期，格式 YYYY-MM-DD
+  date_end:
+    type: string
+    description: 結束日期，格式 YYYY-MM-DD，可省略
+    nullable: true
+  group:
+    type: string
+    description: 行事曆群組名稱
+  label:
+    type: string
+    enum: [Apple red, Deep sky blue, Emerald green]
+    description: 事件顏色標籤

@@ -113,7 +113,7 @@ def _events_in_cell(page: Page, cell) -> list:
         bb = btn.bounding_box()
         if not bb:
             continue
-        cx = bb["x"] + bb["width"] / 2
+        cx = bb["x"]
         cy = bb["y"] + bb["height"] / 2
         if cb["x"] <= cx <= cb["x"] + cb["width"] and cb["y"] <= cy <= cb["y"] + cb["height"]:
             result.append(btn)
