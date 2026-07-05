@@ -21,8 +21,9 @@ def _select_date(page: Page, start: str, end: str, timeout: int = 5000) -> None:
         raise ValueError(f"無效的結束日期：{end}")
 
 
-def add_event(page: Page, title: str, start: str, end: str, label: str) -> None:
-    if not title or not start or not end or not label:
+def add_event(page: Page, title: str, start: str, end: str = None, label: str = None) -> None:
+    end = end or start
+    if not title or not start or not label:
         print(f"[add_event] 缺少必要參數 title={title!r} start={start!r} end={end!r} label={label!r}")
         return
     T = 100

@@ -21,7 +21,12 @@ def goto_calendar(page: Page) -> None:
     page.goto("https://timetreeapp.com/calendars", wait_until="networkidle")
 
 
+def is_session_valid(page: Page) -> bool:
+    return "/calendars" in page.url
+
+
 def get_all_groups(page: Page) -> list[dict]:
+    page.wait_for_selector('[data-test-id="compact-calendar-list-item"]', timeout=10000)
     items = page.locator('[data-test-id="compact-calendar-list-item"]').all()
     groups = []
     for item in items:

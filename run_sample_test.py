@@ -2,7 +2,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 import locators
 
-SESSION = Path("data/session.json")
+SESSION = Path(__file__).parent / "data" / "session.json"
 
 STEPS = ["log_in", "select_group", "delete_event"]
 
@@ -36,7 +36,7 @@ def main():
                 locators.delete_event(page, DELETE_TITLE, DELETE_DATE)
 
         page.pause()
-        context.storage_state(path="data/session.json")
+        context.storage_state(path=str(SESSION))
         browser.close()
 
 

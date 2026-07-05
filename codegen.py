@@ -1,10 +1,13 @@
 import re
+from pathlib import Path
 from playwright.sync_api import Playwright, sync_playwright, expect
+
+SESSION = Path(__file__).parent / "data" / "session.json"
 
 
 def run(playwright: Playwright) -> None:
     browser = playwright.chromium.launch(headless=False)
-    context = browser.new_context(storage_state="data/session.json")
+    context = browser.new_context(storage_state=str(SESSION))
     page = context.new_page()
     page.goto("https://timetreeapp.com/calendars/LLvw7s1RGRjM")
     page.locator("[data-test-id=\"calendar-bar-event-add-button\"]").click()

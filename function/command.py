@@ -1,10 +1,10 @@
 import yaml
 from pathlib import Path
 from playwright.sync_api import sync_playwright
-from .operation_functions import log_in, goto_calendar, select_group
+from .operation_functions import log_in, goto_calendar, select_group, is_session_valid
 from .event_functions import add_event, delete_event, get_events_on_date
 
-SESSION = Path("data/session.json")
+SESSION = Path(__file__).parent.parent / "data" / "session.json"
 _DEFAULTS_YML = Path(__file__).parent.parent / "configs" / "defaults.yml"
 
 def _load_defaults() -> dict:
@@ -23,7 +23,11 @@ def initial_page(p, group: str = None, headless: bool = False):
     page = context.new_page()
     if SESSION.exists():
         goto_calendar(page)
+        if not is_session_valid(page):
+            print("[session] Session 已過期，改用帳密重新登入...")
+            log_in(page)
     else:
+        print("[session] 找不到本地 session，使用帳密登入...")
         log_in(page)
     if not group:
         browser.close()
